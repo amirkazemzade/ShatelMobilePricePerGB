@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Price Per GB Calculator",
+  "version": "1.0",
+  "description": "Calculates and displays the price per gigabyte for internet packages.",
+  "icons": {
+    "32": "icon32.png"
+  },
+  "content_scripts": [
+    {
+      // *** IMPORTANT: Change the match pattern below to your provider's website URL ***
+      // For example, if the website is 'packages.ispname.com', change it to:
+      // "matches": ["https://packages.ispname.com/*"],
+      "matches": ["https://my.shatelmobile.ir/*"],
+      "js": ["content.js"]
+    }
+  ]
+}
