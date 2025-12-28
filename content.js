@@ -1,4 +1,5 @@
 // --- CONFIGURATION: CUSTOMIZED SELECTORS FOR YOUR WEBSITE ---
+// IMPORTANT: Since the site updated, verify these classes via "Inspect Element" in Chrome.
 // 1. Selector for the main container of an individual package box
 const PACKAGE_CONTAINER_SELECTOR = '.card-templ-wrapper';
 // 2. Selector for the element containing the price
@@ -7,68 +8,79 @@ const PRICE_SELECTOR = '.card-price .fa-number';
 const SIZE_SELECTOR = '.card-description h6';
 // --- END CONFIGURATION ---
 
-// Farsi/Arabic number mapping for cleanup
 const FARSI_NUMERAL_MAP = {
   '۰': 0, '۱': 1, '۲': 2, '۳': 3, '۴': 4,
   '۵': 5, '۶': 6, '۷': 7, '۸': 8, '۹': 9
 };
 
 /**
- * Cleans and converts a text string (which might contain Farsi numerals,
- * commas, currency signs, or unit names) into a usable number for PRICE.
- * @param {string} text - The raw text content of the price element.
- * @returns {number} The cleaned numerical value.
+ * Helper to convert Farsi/Arabic string to English numeric string
+ */
+function toEnglishDigits(str) {
+  if (!str) return '';
+  return str.replace(/[\u0660-\u0669\u06F0-\u06F9]/g, function(match) {
+    return FARSI_NUMERAL_MAP[match];
+  });
+}
+
+/**
+ * Cleans and converts a text string into a usable number for PRICE.
  */
 function cleanPriceValue(text) {
   if (!text) return 0;
-
-  // 1. Convert Farsi/Arabic numerals to English numerals
-  let englishText = text.replace(/[\u0660-\u0669\u06F0-\u06F9]/g, function(match) {
-    return FARSI_NUMERAL_MAP[match];
-  });
-
-  // 2. Remove non-numeric characters (toman, commas)
+  let englishText = toEnglishDigits(text);
+  // Remove non-numeric characters except dots (for potential decimals, though usually price is int)
   let cleanedText = englishText.replace(/[^0-9.]/g, '');
-
-  // 3. Parse and return the number
   return parseFloat(cleanedText) || 0;
 }
 
 /**
- * Extracts the size value and converts it to Gigabytes (GB),
- * handling both Megabyte (مگابایت) and Gigabyte (گیگابایت) units.
- * @param {string} text - The raw text content of the size element.
- * @returns {number} The standardized size in GB.
+ * Extracts the size value and converts it to Gigabytes (GB).
+ * UPDATED: Uses Regex to specifically find the number associated with MB/GB
+ * to avoid capturing the "duration" (e.g., "7 Days") by mistake.
  */
 function getSizeInGB(text) {
   if (!text) return 0;
 
-  // 1. Convert Farsi/Arabic numerals to English numerals
-  let englishText = text.replace(/[\u0660-\u0669\u06F0-\u06F9]/g, function(match) {
-    return FARSI_NUMERAL_MAP[match];
-  });
+  // 1. Convert numerals to English
+  let englishText = toEnglishDigits(text);
 
-  // 2. Extract the numeric part (assumes number comes before the unit)
-  const numericMatch = englishText.match(/(\d+\.?\d*)/); 
-  const value = numericMatch ? parseFloat(numericMatch[1]) : 0;
+  // 2. Define Regex to capture (Number) followed immediately by (Unit)
+  // \s* matches zero or more spaces
+  // (?:...) is a non-capturing group for the alternatives
+  const gbRegex = /([\d.]+)\s*(گیگ|gig|gb)/i;
+  const mbRegex = /([\d.]+)\s*(مگ|meg|mb)/i;
 
-  // 3. Determine the unit and scale
-  // Check for Megabyte (مگابایت) or common abbreviations
-  if (englishText.includes('مگابایت') || englishText.includes('MB') || englishText.includes('مگ')) {
-    // Convert MB to GB (1 GB = 1024 MB)
-    return value / 1024;
+  // 3. Check for GB first
+  let gbMatch = englishText.match(gbRegex);
+  if (gbMatch) {
+    return parseFloat(gbMatch[1]);
   }
-  
-  // Assume GB if 'مگابایت' is not present
-  return value;
+
+  // 4. Check for MB
+  let mbMatch = englishText.match(mbRegex);
+  if (mbMatch) {
+    return parseFloat(mbMatch[1]) / 1024;
+  }
+
+  // 5. Fallback: If no unit is found, try to parse the last number in the string
+  // (Assuming format is "Duration ... Size")
+  const allNumbers = englishText.match(/(\d+\.?\d*)/g);
+  if (allNumbers && allNumbers.length > 0) {
+      // Take the last number found, hoping it's the size
+      const val = parseFloat(allNumbers[allNumbers.length - 1]);
+      // Heuristic: If value is > 100, assume MB, otherwise GB (Risky, but a fallback)
+      return val > 100 ? val / 1024 : val;
+  }
+
+  return 0;
 }
 
 /**
  * Calculates the price per unit and injects it into the package box.
- * @param {HTMLElement} packageBox - The main container element for the package.
  */
 function processPackage(packageBox) {
-  // Check if the parameter has already been added to avoid duplicates
+  // Prevent duplicate insertion
   if (packageBox.querySelector('.price-per-gb-extension')) {
       return;
   }
@@ -77,41 +89,41 @@ function processPackage(packageBox) {
   const sizeElement = packageBox.querySelector(SIZE_SELECTOR);
 
   if (!priceElement || !sizeElement) {
-    // Skip if we can't find both price and size elements
-    console.error('Could not find price or size elements in package box:', packageBox);
     return;
   }
 
-  const price = cleanPriceValue(priceElement.textContent);
-  // Use the new function to get standardized size in GB
-  const size = getSizeInGB(sizeElement.textContent); 
+  const priceRaw = priceElement.textContent;
+  const sizeRaw = sizeElement.textContent;
 
-  if (size === 0 || price === 0) {
-    console.warn('Skipping package due to zero price or size:', packageBox);
+  const price = cleanPriceValue(priceRaw);
+  const size = getSizeInGB(sizeRaw);
+
+  // Debugging: Uncomment line below to check values in Console (F12) if calculation is wrong
+  // console.log(`Raw: "${sizeRaw}" | Parsed GB: ${size} | Price: ${price}`);
+
+  if (size <= 0 || price <= 0) {
     return;
   }
 
-  // Calculate the Price per Gigabyte
+  // Calculate Price per Gigabyte
   const pricePerGB = price / size;
   
-  // 1. Round to the nearest integer
+  // Format the output
   const roundedPricePerGB = Math.round(pricePerGB);
-  
-  // 2. Format with thousands separator (e.g., 1234 -> 1,234)
   const formattedPricePerGB = roundedPricePerGB.toLocaleString('en-US', {
     maximumFractionDigits: 0
   });
 
-  // Create the new element to display the result
+  // UI Element Creation
   const newParam = document.createElement('div');
   newParam.className = 'price-per-gb-extension';
   newParam.innerHTML = `
-    <span style="font-weight: 600;">ارزش هر گیگابایت:</span>
+    <span style="font-weight: 600;">هر گیگ:</span>
     <span style="font-weight: 800; color: #007bff; margin-right: 5px;">${formattedPricePerGB}</span>
     تومان
   `;
 
-  // Inject custom styles for the new element
+  // Inject Styles
   let style = document.getElementById('price-per-gb-style');
   if (!style) {
     style = document.createElement('style');
@@ -119,67 +131,54 @@ function processPackage(packageBox) {
     style.textContent = `
       .price-per-gb-extension {
         text-align: center;
-        padding: 10px 0;
-        margin-top: 15px;
-        border-top: 1px dashed #e0e0e0;
-        font-size: 1rem;
+        padding: 8px 0;
+        margin-top: 10px;
+        border-top: 1px dashed #ddd;
+        font-size: 0.95rem;
         color: #333;
-        direction: rtl; /* Ensure correct RTL alignment for Farsi text */
-        background-color: #f9f9f9;
+        direction: rtl;
+        background-color: #fafafa;
         border-radius: 0 0 8px 8px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 5px;
       }
-      .price-per-gb-extension span:first-child {
-          font-size: 0.9rem;
-          color: #666;
-      }
-      /* Inject the new param into the card template (inner wrapper) */
       .card-templ-wrapper > .card-template {
         display: flex;
         flex-direction: column;
         justify-content: space-between;
-        height: 100%;
       }
     `;
     document.head.appendChild(style);
   }
 
-  // Find the inner card-template to ensure the new data sits cleanly inside the styled box
+  // Insertion Logic
   const cardTemplate = packageBox.querySelector('.card-template');
   if (cardTemplate) {
-      // Find the two buy button containers to insert the new element before them
       const buyCredit = cardTemplate.querySelector('.card-buy-credit');
       if (buyCredit) {
-        // Insert the new element right before the "خرید از اعتبار" button
         cardTemplate.insertBefore(newParam, buyCredit);
       } else {
-        // Fallback: append to the end of the inner template
         cardTemplate.appendChild(newParam);
       }
-
   } else {
-      // Final fallback: append to the main wrapper
       packageBox.appendChild(newParam);
   }
 }
 
-
 /**
- * Main function to observe and process packages.
+ * Main Observer
  */
 function observePackages() {
-  // Find all package boxes initially
   const packageBoxes = document.querySelectorAll(PACKAGE_CONTAINER_SELECTOR);
-
   packageBoxes.forEach(processPackage);
 
-  // Use a MutationObserver to watch for dynamically loaded content
   const observer = new MutationObserver(function(mutations) {
     mutations.forEach(function(mutation) {
       if (mutation.type === 'childList') {
         mutation.addedNodes.forEach(function(node) {
-          // Check if the added node is an element node
           if (node.nodeType === 1) {
-            // Check if the node matches the package container or contains one
             if (node.matches(PACKAGE_CONTAINER_SELECTOR)) {
               processPackage(node);
             } else {
@@ -191,10 +190,7 @@ function observePackages() {
     });
   });
 
-  // Start observing the body for changes (packages being added)
   observer.observe(document.body, { childList: true, subtree: true });
 }
 
-// Run the main observation function after the DOM is fully loaded
 window.addEventListener('load', observePackages);
-

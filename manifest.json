@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Price Per GB Calculator",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Calculates and displays the price per gigabyte for internet packages.",
   "icons": {
     "32": "icon32.png"
