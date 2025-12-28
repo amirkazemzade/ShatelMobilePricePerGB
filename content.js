@@ -1,10 +1,6 @@
 // --- CONFIGURATION: CUSTOMIZED SELECTORS FOR YOUR WEBSITE ---
-// IMPORTANT: Since the site updated, verify these classes via "Inspect Element" in Chrome.
-// 1. Selector for the main container of an individual package box
 const PACKAGE_CONTAINER_SELECTOR = '.card-templ-wrapper';
-// 2. Selector for the element containing the price
 const PRICE_SELECTOR = '.card-price .fa-number';
-// 3. Selector for the element containing the package size (GB/MB)
 const SIZE_SELECTOR = '.card-description h6';
 // --- END CONFIGURATION ---
 
@@ -13,9 +9,6 @@ const FARSI_NUMERAL_MAP = {
   '۵': 5, '۶': 6, '۷': 7, '۸': 8, '۹': 9
 };
 
-/**
- * Helper to convert Farsi/Arabic string to English numeric string
- */
 function toEnglishDigits(str) {
   if (!str) return '';
   return str.replace(/[\u0660-\u0669\u06F0-\u06F9]/g, function(match) {
@@ -23,98 +16,55 @@ function toEnglishDigits(str) {
   });
 }
 
-/**
- * Cleans and converts a text string into a usable number for PRICE.
- */
 function cleanPriceValue(text) {
   if (!text) return 0;
   let englishText = toEnglishDigits(text);
-  // Remove non-numeric characters except dots (for potential decimals, though usually price is int)
   let cleanedText = englishText.replace(/[^0-9.]/g, '');
   return parseFloat(cleanedText) || 0;
 }
 
-/**
- * Extracts the size value and converts it to Gigabytes (GB).
- * UPDATED: Uses Regex to specifically find the number associated with MB/GB
- * to avoid capturing the "duration" (e.g., "7 Days") by mistake.
- */
 function getSizeInGB(text) {
   if (!text) return 0;
-
-  // 1. Convert numerals to English
   let englishText = toEnglishDigits(text);
-
-  // 2. Define Regex to capture (Number) followed immediately by (Unit)
-  // \s* matches zero or more spaces
-  // (?:...) is a non-capturing group for the alternatives
+  
+  // Regex to find number attached to unit (GB/MB)
   const gbRegex = /([\d.]+)\s*(گیگ|gig|gb)/i;
   const mbRegex = /([\d.]+)\s*(مگ|meg|mb)/i;
 
-  // 3. Check for GB first
   let gbMatch = englishText.match(gbRegex);
-  if (gbMatch) {
-    return parseFloat(gbMatch[1]);
-  }
+  if (gbMatch) return parseFloat(gbMatch[1]);
 
-  // 4. Check for MB
   let mbMatch = englishText.match(mbRegex);
-  if (mbMatch) {
-    return parseFloat(mbMatch[1]) / 1024;
-  }
+  if (mbMatch) return parseFloat(mbMatch[1]) / 1024;
 
-  // 5. Fallback: If no unit is found, try to parse the last number in the string
-  // (Assuming format is "Duration ... Size")
   const allNumbers = englishText.match(/(\d+\.?\d*)/g);
   if (allNumbers && allNumbers.length > 0) {
-      // Take the last number found, hoping it's the size
       const val = parseFloat(allNumbers[allNumbers.length - 1]);
-      // Heuristic: If value is > 100, assume MB, otherwise GB (Risky, but a fallback)
       return val > 100 ? val / 1024 : val;
   }
-
   return 0;
 }
 
-/**
- * Calculates the price per unit and injects it into the package box.
- */
 function processPackage(packageBox) {
-  // Prevent duplicate insertion
-  if (packageBox.querySelector('.price-per-gb-extension')) {
-      return;
-  }
+  if (packageBox.querySelector('.price-per-gb-extension')) return;
 
   const priceElement = packageBox.querySelector(PRICE_SELECTOR);
   const sizeElement = packageBox.querySelector(SIZE_SELECTOR);
 
-  if (!priceElement || !sizeElement) {
-    return;
-  }
+  if (!priceElement || !sizeElement) return;
 
-  const priceRaw = priceElement.textContent;
-  const sizeRaw = sizeElement.textContent;
+  const price = cleanPriceValue(priceElement.textContent);
+  const size = getSizeInGB(sizeElement.textContent);
 
-  const price = cleanPriceValue(priceRaw);
-  const size = getSizeInGB(sizeRaw);
+  if (size <= 0 || price <= 0) return;
 
-  // Debugging: Uncomment line below to check values in Console (F12) if calculation is wrong
-  // console.log(`Raw: "${sizeRaw}" | Parsed GB: ${size} | Price: ${price}`);
-
-  if (size <= 0 || price <= 0) {
-    return;
-  }
-
-  // Calculate Price per Gigabyte
   const pricePerGB = price / size;
   
-  // Format the output
-  const roundedPricePerGB = Math.round(pricePerGB);
-  const formattedPricePerGB = roundedPricePerGB.toLocaleString('en-US', {
-    maximumFractionDigits: 0
-  });
+  // --- NEW: Store the value on the element for sorting later ---
+  packageBox.setAttribute('data-ppg', pricePerGB); 
 
-  // UI Element Creation
+  const formattedPricePerGB = Math.round(pricePerGB).toLocaleString('en-US');
+
   const newParam = document.createElement('div');
   newParam.className = 'price-per-gb-extension';
   newParam.innerHTML = `
@@ -123,10 +73,9 @@ function processPackage(packageBox) {
     تومان
   `;
 
-  // Inject Styles
-  let style = document.getElementById('price-per-gb-style');
-  if (!style) {
-    style = document.createElement('style');
+  // Inject styles if not present
+  if (!document.getElementById('price-per-gb-style')) {
+    const style = document.createElement('style');
     style.id = 'price-per-gb-style';
     style.textContent = `
       .price-per-gb-extension {
@@ -149,32 +98,108 @@ function processPackage(packageBox) {
         flex-direction: column;
         justify-content: space-between;
       }
+      /* Sort Button Style */
+      #ppg-sort-btn {
+        position: fixed;
+        bottom: 20px;
+        left: 20px;
+        z-index: 9999;
+        padding: 12px 20px;
+        background-color: #007bff;
+        color: white;
+        border: none;
+        border-radius: 50px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        font-family: inherit;
+        font-weight: bold;
+        cursor: pointer;
+        transition: transform 0.2s, background-color 0.2s;
+      }
+      #ppg-sort-btn:hover {
+        background-color: #0056b3;
+        transform: scale(1.05);
+      }
+      #ppg-sort-btn:active {
+        transform: scale(0.95);
+      }
     `;
     document.head.appendChild(style);
   }
 
-  // Insertion Logic
   const cardTemplate = packageBox.querySelector('.card-template');
   if (cardTemplate) {
       const buyCredit = cardTemplate.querySelector('.card-buy-credit');
-      if (buyCredit) {
-        cardTemplate.insertBefore(newParam, buyCredit);
-      } else {
-        cardTemplate.appendChild(newParam);
-      }
+      if (buyCredit) cardTemplate.insertBefore(newParam, buyCredit);
+      else cardTemplate.appendChild(newParam);
   } else {
       packageBox.appendChild(newParam);
   }
 }
 
 /**
- * Main Observer
+ * --- NEW: Function to Sort Packages ---
  */
+function sortPackagesByValue() {
+  // 1. Identify all parent containers that hold packages
+  // We do this by finding all packages, then getting their unique parents
+  const allPackages = document.querySelectorAll(PACKAGE_CONTAINER_SELECTOR);
+  const parents = new Set();
+  
+  allPackages.forEach(pkg => {
+    if (pkg.parentElement) {
+      parents.add(pkg.parentElement);
+    }
+  });
+
+  // 2. Sort children within each parent
+  parents.forEach(parent => {
+    // Get only the children that are actually package boxes
+    const children = Array.from(parent.children).filter(child => 
+      child.matches(PACKAGE_CONTAINER_SELECTOR)
+    );
+
+    // Sort based on the 'data-ppg' attribute we added earlier
+    children.sort((a, b) => {
+      const ppgA = parseFloat(a.getAttribute('data-ppg')) || 99999999; // Default to high if missing
+      const ppgB = parseFloat(b.getAttribute('data-ppg')) || 99999999;
+      return ppgA - ppgB; // Ascending order (Cheapest first)
+    });
+
+    // Re-append in correct order
+    children.forEach(child => parent.appendChild(child));
+  });
+
+  // Visual feedback
+  const btn = document.getElementById('ppg-sort-btn');
+  if(btn) {
+      const originalText = btn.textContent;
+      btn.textContent = "مرتب شد! (Sorted)";
+      setTimeout(() => btn.textContent = originalText, 2000);
+  }
+}
+
+/**
+ * --- NEW: Add Floating Button ---
+ */
+function addSortButton() {
+  if (document.getElementById('ppg-sort-btn')) return;
+
+  const btn = document.createElement('button');
+  btn.id = 'ppg-sort-btn';
+  btn.textContent = "Sort by Value (ارزان‌ترین)";
+  btn.onclick = sortPackagesByValue;
+  document.body.appendChild(btn);
+}
+
 function observePackages() {
   const packageBoxes = document.querySelectorAll(PACKAGE_CONTAINER_SELECTOR);
   packageBoxes.forEach(processPackage);
+  
+  // Add the button once initially
+  addSortButton();
 
   const observer = new MutationObserver(function(mutations) {
+    let shouldAddButton = false;
     mutations.forEach(function(mutation) {
       if (mutation.type === 'childList') {
         mutation.addedNodes.forEach(function(node) {
@@ -184,10 +209,13 @@ function observePackages() {
             } else {
               node.querySelectorAll(PACKAGE_CONTAINER_SELECTOR).forEach(processPackage);
             }
+            shouldAddButton = true;
           }
         });
       }
     });
+    // Ensure button exists if new content loaded completely wiped the body
+    if (shouldAddButton) addSortButton();
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
