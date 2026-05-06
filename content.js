@@ -27,9 +27,8 @@ function getSizeInGB(text) {
   if (!text) return 0;
   let englishText = toEnglishDigits(text);
   
-  // Regex to find number attached to unit (GB/MB)
-  const gbRegex = /([\d.]+)\s*(گیگ|gig|gb)/i;
-  const mbRegex = /([\d.]+)\s*(مگ|meg|mb)/i;
+  const gbRegex = /([\d.]+)\s*(گیگ|گیگابایت|gig|gb)/i;
+  const mbRegex = /([\d.]+)\s*(مگ|مگابایت|meg|mb)/i;
 
   let gbMatch = englishText.match(gbRegex);
   if (gbMatch) return parseFloat(gbMatch[1]);
@@ -47,6 +46,11 @@ function getSizeInGB(text) {
 
 function processPackage(packageBox) {
   if (packageBox.querySelector('.price-per-gb-extension')) return;
+ 
+  if (packageBox.getAttribute('data-pack-type') === 'voice' ||
+      packageBox.getAttribute('data-type-filter') === 'voice') {
+    return;
+  }
 
   const priceElement = packageBox.querySelector(PRICE_SELECTOR);
   const sizeElement = packageBox.querySelector(SIZE_SELECTOR);
@@ -59,8 +63,6 @@ function processPackage(packageBox) {
   if (size <= 0 || price <= 0) return;
 
   const pricePerGB = price / size;
-  
-  // --- NEW: Store the value on the element for sorting later ---
   packageBox.setAttribute('data-ppg', pricePerGB); 
 
   const formattedPricePerGB = Math.round(pricePerGB).toLocaleString('en-US');
@@ -73,7 +75,6 @@ function processPackage(packageBox) {
     تومان
   `;
 
-  // Inject styles if not present
   if (!document.getElementById('price-per-gb-style')) {
     const style = document.createElement('style');
     style.id = 'price-per-gb-style';
@@ -98,7 +99,6 @@ function processPackage(packageBox) {
         flex-direction: column;
         justify-content: space-between;
       }
-      /* Sort Button Style */
       #ppg-sort-btn {
         position: fixed;
         bottom: 20px;
@@ -136,51 +136,56 @@ function processPackage(packageBox) {
   }
 }
 
-/**
- * --- NEW: Function to Sort Packages ---
- */
 function sortPackagesByValue() {
-  // 1. Identify all parent containers that hold packages
-  // We do this by finding all packages, then getting their unique parents
-  const allPackages = document.querySelectorAll(PACKAGE_CONTAINER_SELECTOR);
-  const parents = new Set();
-  
-  allPackages.forEach(pkg => {
-    if (pkg.parentElement) {
-      parents.add(pkg.parentElement);
+  let sortedCount = 0;
+
+  // 1. Sort swiper carousels (best-seller section)
+  const swiperWrappers = document.querySelectorAll('.swiper-wrapper');
+  swiperWrappers.forEach(wrapper => {
+    const slides = Array.from(wrapper.children).filter(child => 
+      child.classList.contains('swiper-slide') && 
+      child.querySelector(PACKAGE_CONTAINER_SELECTOR)
+    );
+
+    if (slides.length > 0) {
+      slides.sort((a, b) => {
+        const pkgA = a.querySelector(PACKAGE_CONTAINER_SELECTOR);
+        const pkgB = b.querySelector(PACKAGE_CONTAINER_SELECTOR);
+        const ppgA = parseFloat(pkgA?.getAttribute('data-ppg')) || 99999999;
+        const ppgB = parseFloat(pkgB?.getAttribute('data-ppg')) || 99999999;
+        return ppgA - ppgB;
+      });
+
+      slides.forEach(slide => wrapper.appendChild(slide));
+      sortedCount += slides.length;
     }
   });
 
-  // 2. Sort children within each parent
-  parents.forEach(parent => {
-    // Get only the children that are actually package boxes
-    const children = Array.from(parent.children).filter(child => 
-      child.matches(PACKAGE_CONTAINER_SELECTOR)
-    );
+  // 2. Sort grid layout (#package-card-list)
+  const gridContainer = document.getElementById('package-card-list');
+  if (gridContainer) {
+    const packages = Array.from(gridContainer.querySelectorAll(PACKAGE_CONTAINER_SELECTOR));
+    
+    if (packages.length > 0) {
+      packages.sort((a, b) => {
+        const ppgA = parseFloat(a.getAttribute('data-ppg')) || 99999999;
+        const ppgB = parseFloat(b.getAttribute('data-ppg')) || 99999999;
+        return ppgA - ppgB;
+      });
 
-    // Sort based on the 'data-ppg' attribute we added earlier
-    children.sort((a, b) => {
-      const ppgA = parseFloat(a.getAttribute('data-ppg')) || 99999999; // Default to high if missing
-      const ppgB = parseFloat(b.getAttribute('data-ppg')) || 99999999;
-      return ppgA - ppgB; // Ascending order (Cheapest first)
-    });
+      packages.forEach(pkg => gridContainer.appendChild(pkg));
+      sortedCount += packages.length;
+    }
+  }
 
-    // Re-append in correct order
-    children.forEach(child => parent.appendChild(child));
-  });
-
-  // Visual feedback
   const btn = document.getElementById('ppg-sort-btn');
   if(btn) {
       const originalText = btn.textContent;
-      btn.textContent = "مرتب شد! (Sorted)";
+      btn.textContent = `مرتب شد! (${sortedCount} sorted)`;
       setTimeout(() => btn.textContent = originalText, 2000);
   }
 }
 
-/**
- * --- NEW: Add Floating Button ---
- */
 function addSortButton() {
   if (document.getElementById('ppg-sort-btn')) return;
 
@@ -192,33 +197,33 @@ function addSortButton() {
 }
 
 function observePackages() {
-  const packageBoxes = document.querySelectorAll(PACKAGE_CONTAINER_SELECTOR);
-  packageBoxes.forEach(processPackage);
-  
-  // Add the button once initially
-  addSortButton();
+  const processAllPackages = () => {
+    const packageBoxes = document.querySelectorAll(PACKAGE_CONTAINER_SELECTOR);
+    packageBoxes.forEach(processPackage);
+    addSortButton();
+  };
+
+  processAllPackages();
 
   const observer = new MutationObserver(function(mutations) {
-    let shouldAddButton = false;
+    let shouldProcess = false;
     mutations.forEach(function(mutation) {
-      if (mutation.type === 'childList') {
-        mutation.addedNodes.forEach(function(node) {
-          if (node.nodeType === 1) {
-            if (node.matches(PACKAGE_CONTAINER_SELECTOR)) {
-              processPackage(node);
-            } else {
-              node.querySelectorAll(PACKAGE_CONTAINER_SELECTOR).forEach(processPackage);
-            }
-            shouldAddButton = true;
-          }
-        });
+      if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+        shouldProcess = true;
       }
     });
-    // Ensure button exists if new content loaded completely wiped the body
-    if (shouldAddButton) addSortButton();
+    if (shouldProcess) {
+      processAllPackages();
+    }
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', observePackages);
+} else {
+  observePackages();
 }
 
 window.addEventListener('load', observePackages);
